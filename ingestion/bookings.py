@@ -157,3 +157,33 @@ def _explode_stay(prop_id, booking_number, stay, today, period_to, ran_at):
     return rows
 
 
+def get_bob_series(conn, prop_id: str, date_from: date, date_to: date) -> dict:
+    """
+    Return rooms-on-books and revenue-on-books per date for a property.
+    Result: {date_str: {"rooms": int, "revenue": float}}
+    """
+    rows = conn.execute("""
+        SELECT stay_date,
+               COUNT(*)                          AS rooms,
+               SUM(COALESCE(nightly_rate_idr,0)) AS revenue
+        FROM bookings_on_books
+        WHERE property_id=? AND stay_date BETWEEN ? AND ?
+        GROUP BY stay_date
+        ORDER BY stay_date
+    """, (prop_id, str(date_from), str(date_to))).fetchall()
+    return {r["stay_date"]: {"rooms": r["rooms"], "revenue": r["revenue"] or 0} for r in rows}
+
+
+def get_bob_summary(conn, prop_id: str, date_from: date, date_to: date) -> dict:
+    """Aggregate BOB stats for a date window."""
+    row = conn.execute("""
+        SELECT
+            COUNT(DISTINCT stay_date)        AS days_with_bookings,
+            COUNT(DISTINCT booking_number)   AS total_bookings,
+            COUNT(*)                         AS total_room_nights
+        FROM bookings_on_books
+        WHERE property_id=? AND stay_date BETWEEN ? AND ?
+    """, (prop_id, str(date_from), str(date_to))).fetchone()
+    return dict(row) if row else {}
+
+

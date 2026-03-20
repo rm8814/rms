@@ -287,11 +287,8 @@ if module == "system_status":
     render_system_status()
 
 elif module == "property_kpis":
-    try:
-        from modules.property_kpis import render
-        render()
-    except ImportError:
-        st.info("Property KPIs module — coming next.")
+    from modules.property_kpis import render
+    render()
 
 elif module == "portfolio":
     from modules.portfolio import render as render_portfolio
