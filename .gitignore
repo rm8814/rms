@@ -1,0 +1,4 @@
+rehat.db
+__pycache__/
+*.pyc
+*.db

@@ -1,0 +1,14 @@
+services:
+  rehat:
+    build: .
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      - rehat_data:/data
+    environment:
+      - REHAT_PASSWORD=${REHAT_PASSWORD:-Rehat2026}
+      - REHAT_DB_PATH=/data/rehat.db
+
+volumes:
+  rehat_data:
