@@ -150,7 +150,7 @@ def _build_forecast(conn, prop_id: str, prop: dict,
                 remaining_occ    = max((avg.get("avg_occ") or 65.0) - bob_occ, 0)
                 forecast_occ     = min(bob_occ + remaining_occ * mult, 100.0)
                 forecast_rooms   = round(room_count * forecast_occ / 100)
-                forecast_adr     = bob_adr * mult
+                forecast_adr     = bob_adr
                 forecast_revenue = round(forecast_rooms * forecast_adr)
                 source = "bob"
             else:
