@@ -28,6 +28,14 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap');
+        html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
+        /* Constrain login form to a centered card */
+        .block-container { max-width: 420px !important; padding-top: 5rem !important; }
+    </style>
+    """, unsafe_allow_html=True)
     st.markdown("## 🏨 REHAT Command Center")
     pw = st.text_input("Password", type="password", key="login_pw")
     if st.button("Login", type="primary"):
@@ -67,6 +75,11 @@ st.markdown("""
         text-align: left !important;
         justify-content: flex-start !important;
         padding-left: 0.75rem;
+    }
+
+    /* Sidebar brand — add visual weight with accent border */
+    [data-testid="stSidebar"] > div:first-child {
+        border-top: 3px solid #6C63FF;
     }
 </style>
 """, unsafe_allow_html=True)
