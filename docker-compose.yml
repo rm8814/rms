@@ -10,5 +10,14 @@ services:
       - REHAT_PASSWORD=${REHAT_PASSWORD:-Rehat2026}
       - REHAT_DB_PATH=/data/rehat.db
 
+  scheduler:
+    build: .
+    restart: always
+    volumes:
+      - rehat_data:/data
+    environment:
+      - REHAT_DB_PATH=/data/rehat.db
+    command: python scheduler.py
+
 volumes:
   rehat_data:

@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from config import PropertyConfig
-from db import get_db
+from db import get_db, log_ingest
 from ingestion.exely_client import ExelyClient, ExelyAPIError
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def ingest_services(prop: PropertyConfig, start_date: date, end_date: date):
     try:
         data = client.fetch_services_chunked(start_date, end_date, date_kind=1)
     except ExelyAPIError as e:
-        _log_ingest(prop.id, "services", start_date, end_date, "error", 0, str(e), ran_at)
+        log_ingest(prop.id, "services", start_date, end_date, "error", 0, str(e), ran_at)
         log.error(f"[{prop.id}] services fetch failed: {e}")
         return
 
@@ -158,11 +158,11 @@ def ingest_services(prop: PropertyConfig, start_date: date, end_date: date):
                 res.get("creationDateTime"), ran_at,
             ))
 
-    # Rebuild snapshot for affected dates
-    for d in affected_dates:
-        _rebuild_snapshot(prop, d)
+    # Rebuild snapshot for all affected dates in one pass (Issue 9A)
+    if affected_dates:
+        _rebuild_snapshots_batch(prop, sorted(affected_dates))
 
-    _log_ingest(prop.id, "services", start_date, end_date, "ok", rows_upserted, None, ran_at)
+    log_ingest(prop.id, "services", start_date, end_date, "ok", rows_upserted, None, ran_at)
     log.info(f"[{prop.id}] services: {rows_upserted} rows, {len(affected_dates)} dates rebuilt")
 
 
@@ -209,64 +209,6 @@ def _upsert_channel_mappings(conn, property_id: str, agents_by_index: dict):
         """, (property_id, raw, display, ctype, now))
 
 
-def _rebuild_snapshot(prop: PropertyConfig, date_str: str):
-    """
-    Recompute daily_snapshot for one property+date from raw_services.
-    Called after every ingest for affected dates.
-    """
-    updated_at = datetime.utcnow().isoformat()
-
-    with get_db() as conn:
-        row = conn.execute("""
-            SELECT
-                -- Each kind=0 row is one room-night for one room (spec: service_id is per-room per stay).
-                -- quantity is expected to be 1 for accommodation. Use COALESCE defensively.
-                SUM(CASE WHEN kind=0 THEN COALESCE(quantity, 1) ELSE 0 END) AS rooms_sold,
-                -- Exclude extras already bundled into room rate (is_included=1) to avoid double-count
-                SUM(CASE WHEN NOT (kind!=0 AND is_included=1) THEN amount_idr ELSE 0 END) AS revenue_total,
-                SUM(CASE WHEN kind=0 THEN amount_idr ELSE 0 END)         AS revenue_rooms,
-                SUM(CASE WHEN kind!=0 AND COALESCE(is_included,0)=0 THEN amount_idr ELSE 0 END) AS revenue_extras,
-                COUNT(DISTINCT booking_number)                            AS bookings_count
-            FROM raw_services
-            WHERE property_id=? AND date=?
-        """, (prop.id, date_str)).fetchone()
-
-        if not row or row["revenue_total"] is None:
-            return
-
-        rooms_sold      = row["rooms_sold"] or 0
-        rooms_available = prop.room_count
-        revenue_rooms   = row["revenue_rooms"] or 0
-        revenue_total   = row["revenue_total"] or 0
-
-        occupancy_pct = (rooms_sold / rooms_available * 100) if rooms_available else 0
-        adr    = (revenue_rooms / rooms_sold)     if rooms_sold     else 0
-        revpar = (revenue_rooms / rooms_available) if rooms_available else 0
-        rehat_revenue = _calc_rehat_revenue(prop, revenue_total, date_str, conn)
-
-        conn.execute("""
-            INSERT INTO daily_snapshot (
-                property_id, date, rooms_sold, rooms_available, occupancy_pct,
-                revenue_total, revenue_rooms, revenue_extras, adr, revpar,
-                rehat_revenue, bookings_count, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(property_id, date) DO UPDATE SET
-                rooms_sold=excluded.rooms_sold,
-                occupancy_pct=excluded.occupancy_pct,
-                revenue_total=excluded.revenue_total,
-                revenue_rooms=excluded.revenue_rooms,
-                revenue_extras=excluded.revenue_extras,
-                adr=excluded.adr,
-                revpar=excluded.revpar,
-                rehat_revenue=excluded.rehat_revenue,
-                bookings_count=excluded.bookings_count,
-                updated_at=excluded.updated_at
-        """, (
-            prop.id, date_str, rooms_sold, rooms_available, occupancy_pct,
-            revenue_total, revenue_rooms, row["revenue_extras"] or 0,
-            adr, revpar, rehat_revenue, row["bookings_count"] or 0, updated_at,
-        ))
-
 
 def rebuild_snapshots_from_raw(prop: PropertyConfig, start_date: date, end_date: date):
     """
@@ -279,9 +221,67 @@ def rebuild_snapshots_from_raw(prop: PropertyConfig, start_date: date, end_date:
             WHERE property_id=? AND date BETWEEN ? AND ?
             ORDER BY date
         """, (prop.id, str(start_date), str(end_date))).fetchall()
-    for r in rows:
-        _rebuild_snapshot(prop, r["date"])
-    return len(rows)
+    dates = [r["date"] for r in rows]
+    if dates:
+        _rebuild_snapshots_batch(prop, dates)
+    return len(dates)
+
+
+def _rebuild_snapshots_batch(prop: PropertyConfig, date_strs: list[str]):
+    """
+    Rebuild daily_snapshot for multiple dates in a single DB transaction.
+    Called after ingest to atomically update all affected dates at once.
+    """
+    updated_at = datetime.utcnow().isoformat()
+
+    with get_db() as conn:
+        for date_str in date_strs:
+            row = conn.execute("""
+                SELECT
+                    SUM(CASE WHEN kind=0 THEN COALESCE(quantity, 1) ELSE 0 END) AS rooms_sold,
+                    SUM(CASE WHEN NOT (kind!=0 AND is_included=1) THEN amount_idr ELSE 0 END) AS revenue_total,
+                    SUM(CASE WHEN kind=0 THEN amount_idr ELSE 0 END)         AS revenue_rooms,
+                    SUM(CASE WHEN kind!=0 AND COALESCE(is_included,0)=0 THEN amount_idr ELSE 0 END) AS revenue_extras,
+                    COUNT(DISTINCT booking_number)                            AS bookings_count
+                FROM raw_services
+                WHERE property_id=? AND date=?
+            """, (prop.id, date_str)).fetchone()
+
+            if not row or row["revenue_total"] is None:
+                continue
+
+            rooms_sold      = row["rooms_sold"] or 0
+            rooms_available = prop.room_count
+            revenue_rooms   = row["revenue_rooms"] or 0
+            revenue_total   = row["revenue_total"] or 0
+
+            occupancy_pct = (rooms_sold / rooms_available * 100) if rooms_available else 0
+            adr    = (revenue_rooms / rooms_sold)      if rooms_sold      else 0
+            revpar = (revenue_rooms / rooms_available)  if rooms_available else 0
+            rehat_revenue = _calc_rehat_revenue(prop, revenue_total, date_str, conn)
+
+            conn.execute("""
+                INSERT INTO daily_snapshot (
+                    property_id, date, rooms_sold, rooms_available, occupancy_pct,
+                    revenue_total, revenue_rooms, revenue_extras, adr, revpar,
+                    rehat_revenue, bookings_count, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(property_id, date) DO UPDATE SET
+                    rooms_sold=excluded.rooms_sold,
+                    occupancy_pct=excluded.occupancy_pct,
+                    revenue_total=excluded.revenue_total,
+                    revenue_rooms=excluded.revenue_rooms,
+                    revenue_extras=excluded.revenue_extras,
+                    adr=excluded.adr,
+                    revpar=excluded.revpar,
+                    rehat_revenue=excluded.rehat_revenue,
+                    bookings_count=excluded.bookings_count,
+                    updated_at=excluded.updated_at
+            """, (
+                prop.id, date_str, rooms_sold, rooms_available, occupancy_pct,
+                revenue_total, revenue_rooms, row["revenue_extras"] or 0,
+                adr, revpar, rehat_revenue, row["bookings_count"] or 0, updated_at,
+            ))
 
 
 def _calc_rehat_revenue(prop: PropertyConfig, revenue_total: float, date_str: str, conn) -> float:
@@ -322,7 +322,7 @@ def _calc_rehat_revenue(prop: PropertyConfig, revenue_total: float, date_str: st
         daily_costs = _get_daily_costs(conn, prop.id, d.year, d.month, days_in_month)
         return revenue_total - daily_costs
 
-    return revenue_total
+    raise ValueError(f"Unknown contract_type '{ct}' for property {prop.id} — check VALID_CONTRACT_TYPES in config.py")
 
 
 def _get_daily_costs(conn, property_id: str, year: int, month: int, days_in_month: int) -> float:
@@ -350,9 +350,3 @@ def _parse_date(date_str: Optional[str]) -> Optional[str]:
         return date_str   # already formatted
 
 
-def _log_ingest(property_id, endpoint, date_from, date_to, status, rows, error, ran_at):
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO ingest_log (property_id, endpoint, date_from, date_to, status, rows_upserted, error_msg, ran_at)
-            VALUES (?,?,?,?,?,?,?,?)
-        """, (property_id, endpoint, str(date_from), str(date_to), status, rows, error, ran_at))

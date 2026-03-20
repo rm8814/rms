@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from config import PropertyConfig
-from db import get_db, get_connection
+from db import get_db, log_ingest
 from ingestion.exely_client import ExelyClient, ExelyAPIError
 
 log = logging.getLogger(__name__)
@@ -39,12 +39,12 @@ def ingest_bookings(prop: PropertyConfig, forward_days: int = FORWARD_DAYS):
             state="Active",
         )
     except ExelyAPIError as e:
-        _log_ingest(prop.id, "bookings_search", today, period_to, "error", 0, str(e), ran_at)
+        log_ingest(prop.id, "bookings_search", today, period_to, "error", 0, str(e), ran_at)
         log.error(f"[{prop.id}] bookings search failed: {e}")
         return
 
     if not booking_numbers:
-        _log_ingest(prop.id, "bookings_search", today, period_to, "ok", 0, None, ran_at)
+        log_ingest(prop.id, "bookings_search", today, period_to, "ok", 0, None, ran_at)
         log.info(f"[{prop.id}] No forward bookings found")
         return
 
@@ -53,14 +53,7 @@ def ingest_bookings(prop: PropertyConfig, forward_days: int = FORWARD_DAYS):
     # ── Step 2: Fetch each booking and explode into nightly rows ─────────────
     rows_upserted = 0
     errors = 0
-
-    # Clear stale future data for this property before reinserting
-    # (cancellations need to disappear — simpler to replace than diff)
-    with get_db() as conn:
-        conn.execute("""
-            DELETE FROM bookings_on_books
-            WHERE property_id=? AND stay_date >= ?
-        """, (prop.id, str(today)))
+    all_stay_rows = []
 
     for number in booking_numbers:
         try:
@@ -77,24 +70,30 @@ def ingest_bookings(prop: PropertyConfig, forward_days: int = FORWARD_DAYS):
         for stay in booking.get("roomStays", []):
             stay["_currencyId"] = booking_currency_id
             stay_rows = _explode_stay(prop.id, number, stay, today, period_to, ran_at)
-            if not stay_rows:
-                continue
-            with get_db() as conn:
-                conn.executemany("""
-                    INSERT INTO bookings_on_books
-                        (property_id, stay_date, booking_number, room_type_id,
-                         check_in, check_out, status, nightly_rate_idr, fetched_at)
-                    VALUES (?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(property_id, stay_date, booking_number) DO UPDATE SET
-                        status=excluded.status,
-                        nightly_rate_idr=excluded.nightly_rate_idr,
-                        fetched_at=excluded.fetched_at
-                """, stay_rows)
-            rows_upserted += len(stay_rows)
+            all_stay_rows.extend(stay_rows)
+
+    # Write all rows in a single transaction (Issue 3A)
+    with get_db() as conn:
+        # Clear stale future data first (cancellations need to disappear)
+        conn.execute("""
+            DELETE FROM bookings_on_books
+            WHERE property_id=? AND stay_date >= ?
+        """, (prop.id, str(today)))
+        conn.executemany("""
+            INSERT INTO bookings_on_books
+                (property_id, stay_date, booking_number, room_type_id,
+                 check_in, check_out, status, nightly_rate_idr, fetched_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(property_id, stay_date, booking_number) DO UPDATE SET
+                status=excluded.status,
+                nightly_rate_idr=excluded.nightly_rate_idr,
+                fetched_at=excluded.fetched_at
+        """, all_stay_rows)
+    rows_upserted = len(all_stay_rows)
 
     status = "ok" if errors == 0 else "partial"
-    _log_ingest(prop.id, "bookings", today, period_to, status, rows_upserted,
-                f"{errors} fetch errors" if errors else None, ran_at)
+    log_ingest(prop.id, "bookings", today, period_to, status, rows_upserted,
+               f"{errors} fetch errors" if errors else None, ran_at)
     log.info(f"[{prop.id}] bookings: {rows_upserted} nightly rows, {errors} errors")
 
 
@@ -158,68 +157,3 @@ def _explode_stay(prop_id, booking_number, stay, today, period_to, ran_at):
     return rows
 
 
-def get_bob_series(conn, prop_id: str, date_from: date, date_to: date) -> dict:
-    """
-    Return rooms-on-books and revenue-on-books per date for a property.
-    Result: {date_str: {"rooms": int, "revenue": float}}
-    Revenue = SUM(nightly_rate_idr) per stay_date (one rate per booking per night).
-    Falls back to 0 revenue if rates not yet populated.
-    """
-    rows = conn.execute("""
-        SELECT stay_date,
-               COUNT(*)                         AS rooms,
-               SUM(COALESCE(nightly_rate_idr,0)) AS revenue
-        FROM bookings_on_books
-        WHERE property_id=? AND stay_date BETWEEN ? AND ?
-        GROUP BY stay_date
-        ORDER BY stay_date
-    """, (prop_id, str(date_from), str(date_to))).fetchall()
-    return {r["stay_date"]: {"rooms": r["rooms"], "revenue": r["revenue"] or 0} for r in rows}
-
-
-def get_bob_summary(conn, prop_id: str, date_from: date, date_to: date) -> dict:
-    """Aggregate BOB stats for a date window."""
-    row = conn.execute("""
-        SELECT
-            COUNT(DISTINCT stay_date)        AS days_with_bookings,
-            COUNT(DISTINCT booking_number)   AS total_bookings,
-            COUNT(*)                         AS total_room_nights
-        FROM bookings_on_books
-        WHERE property_id=? AND stay_date BETWEEN ? AND ?
-    """, (prop_id, str(date_from), str(date_to))).fetchone()
-    return dict(row) if row else {}
-
-
-def _log_ingest(property_id, endpoint, date_from, date_to, status, rows, error, ran_at):
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO ingest_log
-                (property_id, endpoint, date_from, date_to, status, rows_upserted, error_msg, ran_at)
-            VALUES (?,?,?,?,?,?,?,?)
-        """, (property_id, endpoint, str(date_from), str(date_to), status, rows, error, ran_at))
-
-
-def snapshot_bob_today(prop_id: str):
-    """
-    Write today's BOB room counts into bob_snapshots.
-    Call once per day after bookings ingest.
-    Overwrites today's capture if already exists (idempotent).
-    """
-    today = str(date.today())
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT stay_date, COUNT(*) AS rooms
-            FROM bookings_on_books
-            WHERE property_id=? AND stay_date >= ?
-            GROUP BY stay_date
-        """, (prop_id, today)).fetchall()
-
-        # Delete today's existing snapshot first (clean re-run)
-        conn.execute(
-            "DELETE FROM bob_snapshots WHERE property_id=? AND capture_date=?",
-            (prop_id, today)
-        )
-        conn.executemany(
-            "INSERT INTO bob_snapshots (property_id, capture_date, stay_date, rooms) VALUES (?,?,?,?)",
-            [(prop_id, today, r["stay_date"], r["rooms"]) for r in rows]
-        )

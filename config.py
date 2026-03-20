@@ -7,6 +7,7 @@ Only scheduler settings live here.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
 
 VALID_CONTRACT_TYPES = {
@@ -35,6 +36,10 @@ class PropertyConfig:
     advance_total:     Optional[int]   = None
     contract_months:   Optional[int]   = None   # advance_payment: amortization period
 
+    @classmethod
+    def from_db_row(cls, row: dict) -> "PropertyConfig":
+        return cls(**{k: row[k] for k in cls.__dataclass_fields__ if k in row})
+
 
 @dataclass
 class SchedulerConfig:
@@ -46,3 +51,16 @@ class SchedulerConfig:
 scheduler = SchedulerConfig(interval_minutes=5, lookback_days=2)
 
 EXELY_BASE_URL = "https://connect.hopenapi.com/api/exelypms/v1"
+
+# Timezone helpers
+WIB_OFFSET = timedelta(hours=7)   # UTC+7 — Western Indonesian Time
+
+
+def to_wib_str(utc_iso: str) -> str:
+    """Convert a UTC ISO datetime string to WIB display string (YYYY-MM-DD HH:MM WIB)."""
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(utc_iso[:19].replace("T", " ")) + WIB_OFFSET
+        return dt.strftime("%Y-%m-%d %H:%M") + " WIB"
+    except Exception:
+        return utc_iso

@@ -43,10 +43,7 @@ def _run_ingest():
             log.warning(f"[{prop_dict['id']}] Skipping — no API key set")
             continue
 
-        prop = PropertyConfig(**{
-            k: prop_dict[k] for k in PropertyConfig.__dataclass_fields__
-            if k in prop_dict
-        })
+        prop = PropertyConfig.from_db_row(prop_dict)
 
         effective_start = max(month_start, date.fromisoformat(prop.join_date))
         if effective_start > today:
@@ -95,3 +92,21 @@ def stop_scheduler():
         if _scheduler and _scheduler.running:
             _scheduler.shutdown(wait=False)
             log.info("Scheduler stopped")
+
+
+if __name__ == "__main__":
+    import time
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    init_db()
+    migrate_db()
+    start_scheduler()
+    log.info("Scheduler running standalone — press Ctrl+C to stop")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        stop_scheduler()
+        log.info("Scheduler stopped")

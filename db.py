@@ -155,16 +155,6 @@ CREATE TABLE IF NOT EXISTS bookings_on_books (
     PRIMARY KEY (property_id, stay_date, booking_number)
 );
 
--- ── BOB daily snapshots — rooms-on-books per stay_date captured each day ─────
-CREATE TABLE IF NOT EXISTS bob_snapshots (
-    property_id  TEXT NOT NULL,
-    capture_date TEXT NOT NULL,   -- date this snapshot was taken (today at fetch time)
-    stay_date    TEXT NOT NULL,   -- the future stay night
-    rooms        INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (property_id, capture_date, stay_date)
-);
-CREATE INDEX IF NOT EXISTS idx_bob_snap ON bob_snapshots(property_id, capture_date);
-
 -- ── Budget (manual input) ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS budgets (
     property_id     TEXT NOT NULL,
@@ -335,6 +325,15 @@ def migrate_db(db_path: Path = DB_PATH):
         "SELECT name FROM pragma_table_info('raw_services') WHERE pk > 0 ORDER BY pk"
     ).fetchall()]
     if pk_cols != ['service_id', 'property_id', 'date', 'kind']:
+        existing_rows = conn.execute("SELECT COUNT(*) FROM raw_services").fetchone()[0]
+        if existing_rows > 0:
+            print(
+                f"MIGRATION SAFETY GUARD: raw_services has {existing_rows} rows with wrong PK. "
+                "Cannot auto-migrate — use 'Purge Raw Data & Reingest' in System Status to clear "
+                "and re-fetch data, then restart to apply the schema fix."
+            )
+            conn.close()
+            return
         print("Migration: rebuilding raw_services with correct PRIMARY KEY (service_id, property_id, date, kind)")
         print("WARNING: existing raw_services data was stored with wrong PK and is unreliable.")
         print("         All properties must be purged and reingested after this migration.")
@@ -418,6 +417,16 @@ def get_all_properties(conn=None) -> list[dict]:
     if close_after:
         conn.close()
     return result
+
+
+def log_ingest(property_id, endpoint, date_from, date_to, status, rows_upserted, error_msg, ran_at):
+    """Write one row to ingest_log. Used by all ingestion modules."""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO ingest_log
+                (property_id, endpoint, date_from, date_to, status, rows_upserted, error_msg, ran_at)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (property_id, endpoint, str(date_from), str(date_to), status, rows_upserted, error_msg, ran_at))
 
 
 if __name__ == "__main__":

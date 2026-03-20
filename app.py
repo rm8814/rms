@@ -122,13 +122,9 @@ def render_system_status():
     else:
         import pandas as pd
         from datetime import datetime, timedelta
+        from config import to_wib_str
         df = pd.DataFrame([dict(r) for r in logs])
-        def _to_wib(s):
-            try:
-                return (datetime.fromisoformat(s[:19].replace("T", " ")) + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M") + " WIB"
-            except Exception:
-                return s
-        df["ran_at"] = df["ran_at"].map(_to_wib)
+        df["ran_at"] = df["ran_at"].map(to_wib_str)
         st.dataframe(df, width="stretch", hide_index=True, height=400)
 
     # DB row counts
@@ -169,10 +165,7 @@ def render_system_status():
         )
         progress = st.progress(0)
         for i, prop_dict in enumerate(props_to_run):
-            prop = PropertyConfig(**{
-                k: prop_dict[k] for k in PropertyConfig.__dataclass_fields__
-                if k in prop_dict
-            })
+            prop = PropertyConfig.from_db_row(prop_dict)
             with st.spinner(f"Ingesting {prop.name}..."):
                 try:
                     ingest_services(prop, trigger_start, trigger_end)
@@ -193,10 +186,7 @@ def render_system_status():
         )
         progress = st.progress(0)
         for i, prop_dict in enumerate(props_to_run):
-            prop = PropertyConfig(**{
-                k: prop_dict[k] for k in PropertyConfig.__dataclass_fields__
-                if k in prop_dict
-            })
+            prop = PropertyConfig.from_db_row(prop_dict)
             with st.spinner(f"Rebuilding {prop.name}..."):
                 try:
                     n = rebuild_snapshots_from_raw(prop, trigger_start, trigger_end)
@@ -217,10 +207,7 @@ def render_system_status():
         )
         progress = st.progress(0)
         for i, prop_dict in enumerate(props_to_run):
-            prop = PropertyConfig(**{
-                k: prop_dict[k] for k in PropertyConfig.__dataclass_fields__
-                if k in prop_dict
-            })
+            prop = PropertyConfig.from_db_row(prop_dict)
             with st.spinner(f"Purging {prop.name}..."):
                 try:
                     with get_db() as conn:
@@ -278,10 +265,8 @@ with st.sidebar:
         ).fetchone()
         conn.close()
         if last_log:
-            from datetime import datetime, timedelta
-            ran_utc = datetime.fromisoformat(last_log["ran_at"][:19].replace("T", " "))
-            ran_wib = ran_utc + timedelta(hours=7)
-            ran_at  = ran_wib.strftime("%Y-%m-%d %H:%M") + " WIB"
+            from config import to_wib_str
+            ran_at = to_wib_str(last_log["ran_at"])
             icon = "✅" if last_log["status"] == "ok" else "❌"
             st.caption(f"{icon} {ran_at} · {last_log['property_id']}")
         else:
