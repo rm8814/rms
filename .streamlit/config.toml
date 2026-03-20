@@ -5,6 +5,10 @@ port = 8501
 [browser]
 gatherUsageStats = false
 
+[client]
+showDeployButton = false
+showErrorDetails = false
+
 [theme]
 base = "light"
 primaryColor = "#6C63FF"
