@@ -9,6 +9,7 @@ services:
     environment:
       - REHAT_PASSWORD=${REHAT_PASSWORD:-Rehat2026}
       - REHAT_DB_PATH=/data/rehat.db
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 
   scheduler:
     build: .
@@ -17,6 +18,7 @@ services:
       - rehat_data:/data
     environment:
       - REHAT_DB_PATH=/data/rehat.db
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
     command: python scheduler.py
 
 volumes:

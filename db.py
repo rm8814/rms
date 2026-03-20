@@ -303,6 +303,20 @@ def migrate_db(db_path: Path = DB_PATH):
     except Exception:
         pass  # column already exists
 
+    # notifications — Telegram digest recipients per property/audience
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            property_id TEXT    NOT NULL,
+            audience    TEXT    NOT NULL,
+            chat_id     TEXT    NOT NULL,
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            label       TEXT,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+
     # channel_mappings — new table, safe to CREATE IF NOT EXISTS
     conn.execute("""
         CREATE TABLE IF NOT EXISTS channel_mappings (
