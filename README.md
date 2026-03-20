@@ -7,13 +7,13 @@ Internal hotel revenue management system. Multi-property, powered by Exely PMS A
 ```
 rehat/
 ├── app.py                  # Streamlit entry point
-├── config.py               # PropertyConfig dataclass + scheduler settings
+├── config.py               # PropertyConfig dataclass, scheduler settings, WIB helpers
 ├── db.py                   # SQLite schema, migrations, connection helpers
-├── scheduler.py            # Background APScheduler daemon
+├── scheduler.py            # APScheduler daemon — runs standalone in Docker
 ├── ingestion/
 │   ├── exely_client.py     # Exely API wrapper
 │   ├── services.py         # /analytics/services → raw_services + daily_snapshot
-│   └── bookings.py         # /bookings → bookings_on_books + bob_snapshots
+│   └── bookings.py         # /bookings → bookings_on_books
 ├── modules/
 │   ├── property_kpis.py    # Per-property KPI dashboard
 │   ├── portfolio.py        # Cross-property analytics
@@ -22,6 +22,7 @@ rehat/
 │   ├── company_financials.py  # REHAT consolidated financials
 │   ├── acquisition.py      # Hotel acquisition modeler
 │   └── settings.py         # Property config UI
+├── tests/                  # pytest test suite
 └── .streamlit/config.toml  # Dark theme + server settings
 ```
 
@@ -32,15 +33,29 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Default password: `rehat2024` (change via env var below)
+Default password: `rehat2026` (change via `REHAT_PASSWORD` env var)
+
+To run the scheduler locally (separate terminal):
+
+```bash
+python scheduler.py
+```
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+```
 
 ## Deploying 24/7 (Docker)
 
 **Prerequisites:** Any Linux VPS with Docker installed (DigitalOcean, Hetzner, AWS EC2, etc.)
 
+The app runs as two containers — `rehat` (web UI) and `scheduler` (ingestion daemon) — sharing a single SQLite volume. The scheduler runs independently of browser sessions.
+
 ```bash
 # 1. Clone / upload repo to server
-git clone <your-repo> /opt/rehat
+git clone https://github.com/rm8814/rms /opt/rehat
 cd /opt/rehat
 
 # 2. Set your password
@@ -55,7 +70,9 @@ docker compose up -d
 
 **To view logs:**
 ```bash
-docker compose logs -f
+docker compose logs -f          # all services
+docker compose logs -f rehat    # web only
+docker compose logs -f scheduler # ingestion only
 ```
 
 **To update:**
@@ -68,7 +85,7 @@ docker compose up -d --build
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `REHAT_PASSWORD` | `rehat2024` | Login password for all users |
+| `REHAT_PASSWORD` | `rehat2026` | Login password for all users |
 | `REHAT_DB_PATH` | `./rehat.db` | SQLite DB path (set to `/data/rehat.db` in Docker) |
 
 ## Making It HTTPS / Domain
@@ -100,6 +117,16 @@ server {
 
 ```
 Exely API → ingestion/services.py → raw_services → daily_snapshot
-           → ingestion/bookings.py → bookings_on_books → bob_snapshots
-Scheduler runs every 5 min, lookback 2 days (catches updates/corrections)
+           → ingestion/bookings.py → bookings_on_books
+Scheduler runs every 5 min, fetches full current month per property
 ```
+
+## Contract Types
+
+| Type | REHAT revenue formula |
+|---|---|
+| `revshare_revenue` | `revenue × revshare_pct%` |
+| `revshare_gop` | `(revenue − costs) × revshare_gop_pct%` |
+| `revshare_revenue_gop` | both of the above combined |
+| `lease` | `revenue − hotel opex` (rent deducted in monthly P&L) |
+| `advance_payment` | same as lease (advance amortization deducted in P&L) |
