@@ -33,7 +33,9 @@ if not st.session_state.authenticated:
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap');
         html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
         /* Constrain login form to a centered card */
-        .block-container { max-width: 420px !important; padding-top: 5rem !important; }
+        .block-container { max-width: 460px !important; padding-top: 5rem !important; }
+        /* Keep login heading on one line */
+        .block-container h2 { font-size: 1.6rem !important; white-space: nowrap; }
     </style>
     """, unsafe_allow_html=True)
     st.markdown("## 🏨 REHAT Command Center")
