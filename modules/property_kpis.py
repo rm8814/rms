@@ -542,14 +542,14 @@ def render():
             if ch.empty:
                 st.info("No booking source data available for this period.")
             else:
-                # Purple-theme palette for OTAs; fixed shades for own channels
+                # Categorical palette — distinct colors per channel
                 PALETTE = [
-                    "#6C63FF","#8B83FF","#A89EFF","#C4BFFF",
-                    "#5B52E0","#9D96FF","#4A44CC","#DDD9FF","#EDEAFF","#5550D4",
+                    "#06B6D4","#8B5CF6","#10B981","#F59E0B",
+                    "#EF4444","#EC4899","#14B8A6","#F97316","#6366F1","#84CC16",
                 ]
                 TYPE_BASE_COLORS = {
-                    "booking_engine": "#6C63FF",
-                    "front_desk":     "#5550D4",
+                    "booking_engine": "#6366F1",
+                    "front_desk":     "#0F766E",
                 }
                 indirect_rows = ch[ch["channel_type"] == "indirect"].reset_index(drop=True)
                 colors = {}
@@ -568,7 +568,6 @@ def render():
                         adr_val = row.get("adr") or 0
                         table_rows.append({
                             "Channel":      row["display_name"],
-                            "Type":         {"booking_engine": "Booking Engine", "front_desk": "Front Desk", "indirect": "Indirect"}.get(row["channel_type"], row["channel_type"]),
                             "Bookings":     int(row["bookings"]),
                             "Revenue":      _fmt_num(row["revenue"]),
                             "Rev Share %":  f"{row['rev_share']:.1f}%",
@@ -600,9 +599,9 @@ def render():
                         "indirect":       "Indirect (OTA)",
                     }
                     TYPE_COLORS = {
-                        "booking_engine": "#6C63FF",
-                        "front_desk":     "#5550D4",
-                        "indirect":       "#6C63FF",
+                        "booking_engine": "#6366F1",
+                        "front_desk":     "#0F766E",
+                        "indirect":       "#06B6D4",
                     }
                     summary = ch.groupby("channel_type").agg(
                         revenue=("revenue", "sum"), bookings=("bookings", "sum")
@@ -648,20 +647,28 @@ def render():
                     key="dow_metric",
                 )
                 label_fn = DOW_METRICS[dow_metric][1]
-                col_chart, col_table = st.columns([3, 2])
+                col_chart, col_table = st.columns([1, 1])
 
                 with col_chart:
+                    WEEKEND = {"Fri", "Sat", "Sun"}
+                    bar_colors = [
+                        "#6366F1" if d in WEEKEND else "#CBD5E1"
+                        for d in dow["day"]
+                    ]
                     fig_dow = go.Figure(go.Bar(
                         x=dow["day"],
                         y=dow[dow_metric],
                         text=dow[dow_metric].map(label_fn),
                         textposition="outside",
+                        marker_color=bar_colors,
                         marker_line_width=0,
                     ))
                     fig_dow.update_layout(
-                        height=320, margin=dict(l=0, r=0, t=20, b=0),
+                        height=300, margin=dict(l=0, r=0, t=24, b=0),
                         xaxis_title=None, showlegend=False,
                         yaxis_title=DOW_METRICS[dow_metric][0],
+                        plot_bgcolor="white",
+                        yaxis=dict(gridcolor="#F1F5F9"),
                     )
                     st.plotly_chart(fig_dow, use_container_width=True)
 
@@ -673,7 +680,7 @@ def render():
                     tbl["avg_revpar"]  = tbl["avg_revpar"].map(lambda v: f"{int(v):,}")
                     tbl["avg_revenue"] = tbl["avg_revenue"].map(_fmt_num)
                     tbl.columns = ["Day", "Occ %", "Rooms", "ADR", "RevPAR", "Revenue", "n"]
-                    st.dataframe(tbl, use_container_width=True, hide_index=True, height=320)
+                    st.dataframe(tbl, use_container_width=True, hide_index=True, height=300)
 
     st.divider()
     st.subheader("Forecast")
