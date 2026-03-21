@@ -650,25 +650,29 @@ def render():
                 col_chart, col_table = st.columns([1, 1])
 
                 with col_chart:
-                    WEEKEND = {"Fri", "Sat", "Sun"}
-                    bar_colors = [
-                        "#6366F1" if d in WEEKEND else "#CBD5E1"
-                        for d in dow["day"]
+                    dw_vals = dow[dow_metric].tolist()
+                    dw_max  = max(dw_vals) if dw_vals else 1
+                    dw_colors = [
+                        "#6C63FF" if v == dw_max else
+                        "#8B85FF" if v >= dw_max * 0.85 else
+                        "#A5A0FF" if v >= dw_max * 0.70 else
+                        "#C8C5FF"
+                        for v in dw_vals
                     ]
                     fig_dow = go.Figure(go.Bar(
                         x=dow["day"],
-                        y=dow[dow_metric],
+                        y=dw_vals,
                         text=dow[dow_metric].map(label_fn),
                         textposition="outside",
-                        marker_color=bar_colors,
+                        marker_color=dw_colors,
                         marker_line_width=0,
                     ))
                     fig_dow.update_layout(
-                        height=300, margin=dict(l=0, r=0, t=24, b=0),
+                        height=35 * len(dow) + 38,
+                        margin=dict(l=0, r=0, t=10, b=0),
                         xaxis_title=None, showlegend=False,
                         yaxis_title=DOW_METRICS[dow_metric][0],
-                        plot_bgcolor="white",
-                        yaxis=dict(gridcolor="#F1F5F9"),
+                        yaxis=dict(range=[0, dw_max * 1.18]),
                     )
                     st.plotly_chart(fig_dow, use_container_width=True)
 
@@ -680,7 +684,7 @@ def render():
                     tbl["avg_revpar"]  = tbl["avg_revpar"].map(lambda v: f"{int(v):,}")
                     tbl["avg_revenue"] = tbl["avg_revenue"].map(_fmt_num)
                     tbl.columns = ["Day", "Occ %", "Rooms", "ADR", "RevPAR", "Revenue", "n"]
-                    st.dataframe(tbl, use_container_width=True, hide_index=True, height=300)
+                    st.dataframe(tbl, use_container_width=True, hide_index=True, height=35 * len(dow) + 38)
 
     st.divider()
     st.subheader("Forecast")
