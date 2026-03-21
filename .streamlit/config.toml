@@ -6,8 +6,8 @@ port = 8501
 gatherUsageStats = false
 
 [client]
-showDeployButton = false
 showErrorDetails = false
+toolbarMode = "minimal"
 
 [theme]
 base = "light"
