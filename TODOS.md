@@ -61,6 +61,39 @@ first, then extend to GMs).
 
 ---
 
+## Extract DOW_METRICS to shared module
+`DOW_METRICS` dict (metric key → label + format function) is copy-pasted
+identically in `modules/portfolio.py:597` and `modules/property_kpis.py:635`.
+
+**Why:** Label drift — if someone renames "Avg Occ %" in one file, the other
+silently shows the old label. Also duplication will grow when GM digest or
+other modules need the same format functions.
+
+**Pros:** Single source of truth for metric labels; easy to add new metrics.
+**Cons:** Adds an import dependency between modules — minor.
+
+**How to start:** Add `DOW_METRICS` to `modules/shared.py` (create if needed)
+or to `config.py`. Import it in both `portfolio.py` and `property_kpis.py`.
+
+**Priority:** Low — only relevant when a label changes or a third module needs it.
+
+---
+
+## Test coverage for send_owner_digests()
+Add `tests/test_send_owner_digests.py` covering: happy path (digest sent, log_ingest ok),
+auto-disable path (BAD_ID/BLOCKED → UPDATE enabled=0), missing TELEGRAM_BOT_TOKEN
+early return, and per-row exception isolation (one bad row doesn't stop others).
+
+**Why:** The auto-disable logic is silent production behavior — if it broke,
+owners would stop receiving digests with no alert.
+
+**How to start:** Mock `get_connection`, `query_owner_digest`, `format_owner_message`,
+`send_message`, and `log_ingest`. Use an in-memory SQLite `notifications` table.
+
+**Priority:** Medium — important before scaling to 5+ properties.
+
+---
+
 ## Batch snapshot rebuild into one transaction
 Refactor `ingestion/services.py:_rebuild_snapshot` to rebuild all affected dates
 in a single DB transaction rather than one connection open/commit per date.
