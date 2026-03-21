@@ -818,7 +818,7 @@ def render():
                              "Fcst Rooms","Fcst Occ%","Fcst ADR","Fcst RevPAR","Fcst Revenue",
                              "Pickup d-1","Event"]]
                 st.dataframe(show, use_container_width=True, hide_index=True,
-                             height=min(35 * len(show) + 38, 600))
+                             height=35 * len(show) + 38)
 
     # ── 90 Day Overview ──────────────────────────────────────────────────────────
     with tab_overview:
