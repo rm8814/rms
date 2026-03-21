@@ -583,11 +583,11 @@ def render():
                         color_discrete_map=colors,
                         hole=0.45,
                     )
-                    fig_ch.update_traces(textposition="inside", textinfo="percent+label")
+                    fig_ch.update_traces(textposition="inside", textinfo="percent")
                     fig_ch.update_layout(
-                        height=380, margin=dict(l=0, r=0, t=10, b=0),
+                        height=380, margin=dict(l=0, r=0, t=10, b=80),
                         showlegend=True,
-                        legend=dict(orientation="v", x=1.02, y=0.5),
+                        legend=dict(orientation="h", xanchor="center", x=0.5, y=-0.15),
                     )
                     st.plotly_chart(fig_ch, use_container_width=True)
 
